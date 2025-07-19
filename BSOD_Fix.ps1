@@ -1,8 +1,19 @@
 # BSOD Fixer PowerShell Script
 # Runs in Windows 10/11, including WinRE, to fix all non-hardware BSOD errors
 
-# Log file setup
-$LogFile = "C:\BSOD_Fixer_Log_$((Get-Date).ToString('yyyyMMdd_HHmmss')).txt"
+# Detect USB drive letter
+function Get-USBDriveLetter {
+    $Drives = Get-WmiObject Win32_Volume | Where-Object {$_.DriveType -eq 2} # Removable drives
+    foreach ($Drive in $Drives) {
+        if ($Drive.DriveLetter -and (Test-Path "$($Drive.DriveLetter)\BSOD_Fix.ps1")) {
+            return $Drive.DriveLetter
+        }
+    }
+    return "D:" # Fallback
+}
+$USBDriveLetter = Get-USBDriveLetter
+$LogFile = "$USBDriveLetter\BSOD_Fixer_Log_$((Get-Date).ToString('yyyyMMdd_HHmmss')).txt"
+
 function Write-Log {
     param($Message, $Level = "INFO")
     $Timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
@@ -39,7 +50,6 @@ $BSODErrors = @{
     "0x000000F7" = @{ "Desc" = "DRIVER_OVERRAN_STACK_BUFFER"; "Action" = "Update drivers, check for software conflicts" }
     "0x000000ED" = @{ "Desc" = "UNMOUNTABLE_BOOT_VOLUME"; "Action" = "Run Startup Repair, check disk" }
     "0x000000C000021A" = @{ "Desc" = "FATAL_SYSTEM_ERROR"; "Action" = "Run SFC/DISM, check registry" }
-    # Add more codes as needed from Microsoft Bug Check Reference
 }
 $HardwareErrors = @("0x00000080", "0x0000009C", "0x00000124")
 
@@ -71,8 +81,8 @@ function Get-WindowsVersion {
 function Invoke-SFC {
     Write-Log "Running SFC /scannow..."
     try {
-        $SFCResult = Start-Process -FilePath "sfc.exe" -ArgumentList "/scannow" -NoNewWindow -Wait -RedirectStandardOutput "C:\sfc_output.txt" -PassThru
-        $SFCOutput = Get-Content "C:\sfc_output.txt" -Raw -ErrorAction Stop
+        $SFCResult = Start-Process -FilePath "sfc.exe" -ArgumentList "/scannow" -NoNewWindow -Wait -RedirectStandardOutput "$($USBDriveLetter)\sfc_output.txt" -PassThru
+        $SFCOutput = Get-Content "$($USBDriveLetter)\sfc_output.txt" -Raw -ErrorAction Stop
         Write-Log "SFC Output: $SFCOutput"
         if ($SFCResult.ExitCode -ne 0) {
             Write-Log "SFC failed with exit code: $($SFCResult.ExitCode)" "ERROR"
@@ -114,8 +124,8 @@ function Invoke-DISM {
         $Action = ($Cmd -split " ")[3]
         Write-Log "Running DISM $Action..."
         try {
-            $DISMResult = Start-Process -FilePath "DISM.exe" -ArgumentList $Cmd -NoNewWindow -Wait -RedirectStandardOutput "C:\dism_output.txt" -PassThru
-            $DISMOutput = Get-Content "C:\dism_output.txt" -Raw -ErrorAction Stop
+            $DISMResult = Start-Process -FilePath "DISM.exe" -ArgumentList $Cmd -NoNewWindow -Wait -RedirectStandardOutput "$($USBDriveLetter)\dism_output.txt" -PassThru
+            $DISMOutput = Get-Content "$($USBDriveLetter)\dism_output.txt" -Raw -ErrorAction Stop
             Write-Log "$Action Output: $DISMOutput"
             if ($DISMResult.ExitCode -ne 0) {
                 Write-Log "$Action failed with exit code: $($DISMResult.ExitCode)" "ERROR"
@@ -189,7 +199,7 @@ function Test-Registry {
 
 # Backup registry
 function Backup-Registry {
-    $BackupDir = "C:\BSOD_Fixer_Backup"
+    $BackupDir = "$USBDriveLetter\BSOD_Fixer_Backup"
     New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
     $Timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
     Write-Log "Backing up registry..."
@@ -236,9 +246,7 @@ function Analyze-Minidump {
     $ErrorCode = $null
     foreach ($Dump in $DumpFiles) {
         try {
-            # Basic parsing (limited in PowerShell; extend with Event Viewer if needed)
             Write-Log "Analyzed dump: $($Dump.FullName)"
-            # Check Event Viewer for BugCheck events
             $Events = Get-WinEvent -FilterHashtable @{LogName="System";Level=2;ProviderName="Microsoft-Windows-WER-SystemErrorReporting"} -MaxEvents 10 -ErrorAction SilentlyContinue
             foreach ($Event in $Events) {
                 if ($Event.Properties.Count -ge 1) {
@@ -256,7 +264,6 @@ function Analyze-Minidump {
                     }
                 }
             }
-            # Fallback: Default to common non-hardware error if no code found
             $ErrorCode = "0x0000003B"
             Write-Log "No specific error code found in Event Viewer; defaulting to $ErrorCode"
         }
@@ -294,7 +301,7 @@ function Execute-ErrorAction {
     param($ErrorCode)
     if ($BSODErrors.ContainsKey($ErrorCode)) {
         $Action = $BSODErrors[$ErrorCode].Action
-        Write-Log "Executing action for $ErrorCode: $Action"
+        Write-Log "Executing action for ${ErrorCode}: $Action"
         if ($Action -match "driver") {
             Write-Log "Running Driver Verifier to identify faulty drivers."
             Set-DriverVerifier
