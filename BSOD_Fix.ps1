@@ -1,25 +1,20 @@
 # BSOD Fixer PowerShell Script
 # Runs in Windows 10/11, including WinRE, to fix all non-hardware BSOD errors
 
-# Detect USB drive letter
-function Get-USBDriveLetter {
-    $Drives = Get-WmiObject Win32_Volume | Where-Object {$_.DriveType -eq 2} # Removable drives
-    foreach ($Drive in $Drives) {
-        if ($Drive.DriveLetter -and (Test-Path "$($Drive.DriveLetter)\BSOD_Fix.ps1")) {
-            return $Drive.DriveLetter
-        }
-    }
-    return "D:" # Fallback
-}
-$USBDriveLetter = Get-USBDriveLetter
-$LogFile = "$USBDriveLetter\BSOD_Fixer_Log_$((Get-Date).ToString('yyyyMMdd_HHmmss')).txt"
+# Log file setup
+$LogFile = "C:\BSOD_Fixer_Log_$((Get-Date).ToString('yyyyMMdd_HHmmss')).txt"
 
 function Write-Log {
     param($Message, $Level = "INFO")
     $Timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-    "$Timestamp - $Level - $Message" | Out-File -FilePath $LogFile -Append
-    if ($Level -eq "INFO") { Write-Host "[INFO] $Message" }
-    if ($Level -eq "ERROR") { Write-Host "[ERROR] $Message" -ForegroundColor Red }
+    try {
+        "$Timestamp - $Level - $Message" | Out-File -FilePath $LogFile -Append -ErrorAction Stop
+        if ($Level -eq "INFO") { Write-Host "[INFO] $Message" }
+        if ($Level -eq "ERROR") { Write-Host "[ERROR] $Message" -ForegroundColor Red }
+    }
+    catch {
+        Write-Host "[ERROR] Failed to write to log file: $_"
+    }
 }
 
 # Comprehensive BSOD error code mappings (non-hardware and hardware)
@@ -81,8 +76,8 @@ function Get-WindowsVersion {
 function Invoke-SFC {
     Write-Log "Running SFC /scannow..."
     try {
-        $SFCResult = Start-Process -FilePath "sfc.exe" -ArgumentList "/scannow" -NoNewWindow -Wait -RedirectStandardOutput "$($USBDriveLetter)\sfc_output.txt" -PassThru
-        $SFCOutput = Get-Content "$($USBDriveLetter)\sfc_output.txt" -Raw -ErrorAction Stop
+        $SFCResult = Start-Process -FilePath "sfc.exe" -ArgumentList "/scannow" -NoNewWindow -Wait -RedirectStandardOutput "C:\sfc_output.txt" -PassThru
+        $SFCOutput = Get-Content "C:\sfc_output.txt" -Raw -ErrorAction Stop
         Write-Log "SFC Output: $SFCOutput"
         if ($SFCResult.ExitCode -ne 0) {
             Write-Log "SFC failed with exit code: $($SFCResult.ExitCode)" "ERROR"
@@ -124,8 +119,8 @@ function Invoke-DISM {
         $Action = ($Cmd -split " ")[3]
         Write-Log "Running DISM $Action..."
         try {
-            $DISMResult = Start-Process -FilePath "DISM.exe" -ArgumentList $Cmd -NoNewWindow -Wait -RedirectStandardOutput "$($USBDriveLetter)\dism_output.txt" -PassThru
-            $DISMOutput = Get-Content "$($USBDriveLetter)\dism_output.txt" -Raw -ErrorAction Stop
+            $DISMResult = Start-Process -FilePath "DISM.exe" -ArgumentList $Cmd -NoNewWindow -Wait -RedirectStandardOutput "C:\dism_output.txt" -PassThru
+            $DISMOutput = Get-Content "C:\dism_output.txt" -Raw -ErrorAction Stop
             Write-Log "$Action Output: $DISMOutput"
             if ($DISMResult.ExitCode -ne 0) {
                 Write-Log "$Action failed with exit code: $($DISMResult.ExitCode)" "ERROR"
@@ -199,7 +194,7 @@ function Test-Registry {
 
 # Backup registry
 function Backup-Registry {
-    $BackupDir = "$USBDriveLetter\BSOD_Fixer_Backup"
+    $BackupDir = "C:\BSOD_Fixer_Backup"
     New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
     $Timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
     Write-Log "Backing up registry..."
